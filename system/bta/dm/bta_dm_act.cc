@@ -74,19 +74,21 @@ static void bta_dm_inq_results_cb(tBTM_INQ_RESULTS* p_inq, const uint8_t* p_eir,
                                   uint16_t eir_len);
 static void bta_dm_inq_cmpl_cb(void* p_result);
 static void bta_dm_service_search_remname_cback(const RawAddress& bd_addr,
-                                                DEV_CLASS dc, BD_NAME bd_name);
+                                                DEV_CLASS dc,
+                                                tBTM_BD_NAME bd_name);
 static void bta_dm_remname_cback(void* p);
 static void bta_dm_find_services(const RawAddress& bd_addr);
 static void bta_dm_discover_next_device(void);
 static void bta_dm_sdp_callback(tSDP_STATUS sdp_status);
 static uint8_t bta_dm_pin_cback(const RawAddress& bd_addr, DEV_CLASS dev_class,
-                                const BD_NAME bd_name, bool min_16_digit);
+                                const tBTM_BD_NAME bd_name, bool min_16_digit);
 static uint8_t bta_dm_new_link_key_cback(const RawAddress& bd_addr,
-                                         DEV_CLASS dev_class, BD_NAME bd_name,
+                                         DEV_CLASS dev_class,
+                                         tBTM_BD_NAME bd_name,
                                          const LinkKey& key, uint8_t key_type);
 static void bta_dm_authentication_complete_cback(const RawAddress& bd_addr,
                                                  DEV_CLASS dev_class,
-                                                 BD_NAME bd_name,
+                                                 tBTM_BD_NAME bd_name,
                                                  tHCI_REASON result);
 static void bta_dm_local_name_cback(void* p_name);
 static void bta_dm_check_av();
@@ -119,7 +121,6 @@ static void bta_dm_ble_id_key_cback(uint8_t key_type,
                                     tBTM_BLE_LOCAL_KEYS* p_key);
 static void bta_dm_gattc_register(void);
 static void btm_dm_start_gatt_discovery(const RawAddress& bd_addr);
-static void bta_dm_cancel_gatt_discovery(const RawAddress& bd_addr);
 static void bta_dm_gattc_callback(tBTA_GATTC_EVT event, tBTA_GATTC* p_data);
 extern tBTM_CONTRL_STATE bta_dm_pm_obtain_controller_state(void);
 #if (BLE_VND_INCLUDED == TRUE)
@@ -143,7 +144,7 @@ static void bta_dm_ctrl_features_rd_cmpl_cback(tHCI_STATUS result);
 
 /* Disable connection down timer (in milliseconds) */
 #ifndef BTA_DM_DISABLE_CONN_DOWN_TIMER_MS
-#define BTA_DM_DISABLE_CONN_DOWN_TIMER_MS 1000
+#define BTA_DM_DISABLE_CONN_DOWN_TIMER_MS 100
 #endif
 
 /* Switch delay timer (in milliseconds) */
@@ -472,9 +473,7 @@ void bta_dm_disable() {
  * Description      Called if the disable timer expires
  *                  Used to close ACL connections which are still active
  *
- *
- *
- * Returns          void
+ * Returns          true if there is a device being forcefully disconnected
  *
  ******************************************************************************/
 static bool force_disconnect_all_acl_connections() {
@@ -888,10 +887,6 @@ void bta_dm_search_cancel() {
     bta_dm_search_cmpl();
   } else {
     bta_dm_inq_cmpl(0);
-  }
-
-  if (bta_dm_search_cb.gatt_disc_active) {
-    bta_dm_cancel_gatt_discovery(bta_dm_search_cb.peer_bdaddr);
   }
 }
 
@@ -1541,9 +1536,6 @@ void bta_dm_search_cancel_notify() {
        bta_dm_search_cb.state == BTA_DM_SEARCH_CANCELLING)) {
     BTM_CancelRemoteDeviceName();
   }
-  if (bta_dm_search_cb.gatt_disc_active) {
-    bta_dm_cancel_gatt_discovery(bta_dm_search_cb.peer_bdaddr);
-  }
 }
 
 /*******************************************************************************
@@ -1886,7 +1878,7 @@ static void bta_dm_inq_cmpl_cb(void* p_result) {
  ******************************************************************************/
 static void bta_dm_service_search_remname_cback(const RawAddress& bd_addr,
                                                 UNUSED_ATTR DEV_CLASS dc,
-                                                BD_NAME bd_name) {
+                                                tBTM_BD_NAME bd_name) {
   tBTM_REMOTE_DEV_NAME rem_name;
   tBTM_STATUS btm_status;
 
@@ -2037,7 +2029,7 @@ static void bta_dm_pinname_cback(void* p_data) {
  *
  ******************************************************************************/
 static uint8_t bta_dm_pin_cback(const RawAddress& bd_addr, DEV_CLASS dev_class,
-                                const BD_NAME bd_name, bool min_16_digit) {
+                                const tBTM_BD_NAME bd_name, bool min_16_digit) {
   if (!bta_dm_cb.p_sec_cback) return BTM_NOT_AUTHORIZED;
 
   /* If the device name is not known, save bdaddr and devclass and initiate a
@@ -2076,15 +2068,14 @@ static uint8_t bta_dm_pin_cback(const RawAddress& bd_addr, DEV_CLASS dev_class,
  ******************************************************************************/
 static uint8_t bta_dm_new_link_key_cback(const RawAddress& bd_addr,
                                          UNUSED_ATTR DEV_CLASS dev_class,
-                                         BD_NAME bd_name, const LinkKey& key,
-                                         uint8_t key_type) {
+                                         tBTM_BD_NAME bd_name,
+                                         const LinkKey& key, uint8_t key_type) {
   tBTA_DM_SEC sec_event;
   tBTA_DM_AUTH_CMPL* p_auth_cmpl;
-  uint8_t event;
+  tBTA_DM_SEC_EVT event = BTA_DM_AUTH_CMPL_EVT;
 
   memset(&sec_event, 0, sizeof(tBTA_DM_SEC));
 
-  event = BTA_DM_AUTH_CMPL_EVT;
   p_auth_cmpl = &sec_event.auth_cmpl;
 
   p_auth_cmpl->bd_addr = bd_addr;
@@ -2122,8 +2113,8 @@ static uint8_t bta_dm_new_link_key_cback(const RawAddress& bd_addr,
  *
  ******************************************************************************/
 static void bta_dm_authentication_complete_cback(
-    const RawAddress& bd_addr, UNUSED_ATTR DEV_CLASS dev_class, BD_NAME bd_name,
-    tHCI_REASON reason) {
+    const RawAddress& bd_addr, UNUSED_ATTR DEV_CLASS dev_class,
+    tBTM_BD_NAME bd_name, tHCI_REASON reason) {
   if (reason != HCI_SUCCESS) {
     if (bta_dm_cb.p_sec_cback) {
       // Build out the security event data structure
@@ -3651,9 +3642,9 @@ static void bta_dm_ble_id_key_cback(uint8_t key_type,
         };
         memcpy(&dm_key.ble_id_keys, p_key, sizeof(tBTM_BLE_LOCAL_KEYS));
 
-        uint8_t evt = (key_type == BTM_BLE_KEY_TYPE_ID)
-                          ? BTA_DM_BLE_LOCAL_IR_EVT
-                          : BTA_DM_BLE_LOCAL_ER_EVT;
+        tBTA_DM_SEC_EVT evt = (key_type == BTM_BLE_KEY_TYPE_ID)
+                                  ? BTA_DM_BLE_LOCAL_IR_EVT
+                                  : BTA_DM_BLE_LOCAL_ER_EVT;
         bta_dm_cb.p_sec_cback(evt, &dm_key);
       }
       break;
@@ -3968,23 +3959,6 @@ void btm_dm_start_gatt_discovery(const RawAddress& bd_addr) {
       BTA_GATTC_Open(bta_dm_search_cb.client_if, bd_addr, true, false);
     }
   }
-}
-
-/*******************************************************************************
- *
- * Function         bta_dm_cancel_gatt_discovery
- *
- * Description      This is GATT cancel the GATT service search.
- *
- * Parameters:
- *
- ******************************************************************************/
-static void bta_dm_cancel_gatt_discovery(const RawAddress& bd_addr) {
-  if (bta_dm_search_cb.conn_id == GATT_INVALID_CONN_ID) {
-    BTA_GATTC_CancelOpen(bta_dm_search_cb.client_if, bd_addr, true);
-  }
-
-  bta_dm_gatt_disc_complete(bta_dm_search_cb.conn_id, (tGATT_STATUS)GATT_ERROR);
 }
 
 /*******************************************************************************

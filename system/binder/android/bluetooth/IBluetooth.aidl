@@ -110,12 +110,12 @@ interface IBluetooth
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_SCAN)")
     int getScanMode(in AttributionSource attributionSource);
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_SCAN)")
-    boolean setScanMode(int mode, int duration, in AttributionSource attributionSource);
+    int setScanMode(int mode, in AttributionSource attributionSource);
 
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_SCAN)")
-    int getDiscoverableTimeout(in AttributionSource attributionSource);
+    long getDiscoverableTimeout(in AttributionSource attributionSource);
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_SCAN)")
-    boolean setDiscoverableTimeout(int timeout, in AttributionSource attributionSource);
+    int setDiscoverableTimeout(long timeout, in AttributionSource attributionSource);
 
     @JavaPassthrough(annotation="@android.annotation.RequiresPermission(android.Manifest.permission.BLUETOOTH_SCAN)")
     boolean startDiscovery(in AttributionSource attributionSource);
@@ -229,7 +229,7 @@ interface IBluetooth
     @JavaPassthrough(annotation="@android.annotation.RequiresNoPermission")
     boolean isLePeriodicAdvertisingSupported();
     @JavaPassthrough(annotation="@android.annotation.RequiresNoPermission")
-    int isCisCentralSupported();
+    int isLeAudioSupported();
     @JavaPassthrough(annotation="@android.annotation.RequiresNoPermission")
     int isLePeriodicAdvertisingSyncTransferSenderSupported();
     @JavaPassthrough(annotation="@android.annotation.RequiresNoPermission")

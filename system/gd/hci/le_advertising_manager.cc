@@ -13,15 +13,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include "hci/le_advertising_manager.h"
+
 #include <memory>
 #include <mutex>
 
+#include "common/init_flags.h"
 #include "hci/acl_manager.h"
 #include "hci/controller.h"
 #include "hci/hci_layer.h"
 #include "hci/hci_packets.h"
 #include "hci/le_advertising_interface.h"
-#include "hci/le_advertising_manager.h"
 #include "module.h"
 #include "os/handler.h"
 #include "os/log.h"
@@ -56,6 +58,7 @@ struct Advertiser {
   uint8_t max_extended_advertising_events;
   bool started = false;
   bool connectable = false;
+  bool directed = false;
   std::unique_ptr<os::Alarm> address_rotation_alarm;
 };
 
@@ -168,6 +171,7 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
       LOG_INFO("Dropping invalid advertising event");
       return;
     }
+    LOG_VERBOSE("Received LE Advertising Set Terminated with status %s", ErrorCodeText(event_view.GetStatus()).c_str());
 
     uint8_t advertiser_id = event_view.GetAdvertisingHandle();
 
@@ -179,8 +183,21 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
 
     AddressWithType advertiser_address = advertising_sets_[event_view.GetAdvertisingHandle()].current_address;
 
-    acl_manager_->OnAdvertisingSetTerminated(
-        event_view.GetStatus(), event_view.GetConnectionHandle(), advertiser_address);
+    auto status = event_view.GetStatus();
+    acl_manager_->OnAdvertisingSetTerminated(status, event_view.GetConnectionHandle(), advertiser_address);
+    if (status == ErrorCode::LIMIT_REACHED || status == ErrorCode::ADVERTISING_TIMEOUT) {
+      advertising_callbacks_->OnAdvertisingEnabled(advertiser_id, false, (uint8_t)status);
+      return;
+    }
+
+    if (!advertising_sets_[advertiser_id].directed) {
+      // TODO calculate remaining duration and advertising events
+      if (advertising_sets_[advertiser_id].duration == 0 &&
+          advertising_sets_[advertiser_id].max_extended_advertising_events == 0) {
+        LOG_INFO("Reenable advertising");
+        enable_advertiser(advertiser_id, true, 0, 0);
+      }
+    }
   }
 
   AdvertiserId allocate_advertiser() {
@@ -460,6 +477,7 @@ struct LeAdvertisingManager::impl : public bluetooth::hci::LeAddressManagerCallb
   void set_parameters(AdvertiserId advertiser_id, ExtendedAdvertisingConfig config) {
     advertising_sets_[advertiser_id].connectable = config.connectable;
     advertising_sets_[advertiser_id].tx_power = config.tx_power;
+    advertising_sets_[advertiser_id].directed = config.directed;
 
     switch (advertising_api_type_) {
       case (AdvertisingApiType::LEGACY): {

@@ -394,7 +394,8 @@ uint8_t* avdt_scb_hdl_report(AvdtpScb* p_scb, uint8_t* p, uint16_t len) {
             goto avdt_scb_hdl_report_exit;
           }
           BE_STREAM_TO_UINT8(name_length, p);
-          if (name_length > len - 2 || name_length > AVDT_MAX_CNAME_SIZE) {
+          if (name_length > len - min_len ||
+              name_length > AVDT_MAX_CNAME_SIZE) {
             result = AVDT_BAD_PARAMS;
           } else {
             BE_STREAM_TO_ARRAY(p, &(report.cname[0]), name_length);
@@ -407,8 +408,8 @@ uint8_t* avdt_scb_hdl_report(AvdtpScb* p_scb, uint8_t* p, uint16_t len) {
                 __func__, len, min_len);
             goto avdt_scb_hdl_report_exit;
           }
-          AVDT_TRACE_WARNING(" - SDES SSRC=0x%08x sc=%d %d len=%d %s", ssrc,
-                             o_cc, *p, *(p + 1), p + 2);
+          AVDT_TRACE_WARNING("%s: SDES SSRC=0x%08x sc=%d %d len=%d", __func__,
+                             ssrc, o_cc, sdes_type, *p);
           result = AVDT_BUSY;
         }
         break;
@@ -691,6 +692,7 @@ void avdt_scb_snd_snk_delay_rpt_req(AvdtpScb* p_scb,
  *
  ******************************************************************************/
 void avdt_scb_hdl_setconfig_rsp(AvdtpScb* p_scb, tAVDT_SCB_EVT* p_data) {
+  tAVDT_EVT_HDR single;
 
   if (p_scb->p_ccb != NULL) {
     /* save configuration */
@@ -700,19 +702,11 @@ void avdt_scb_hdl_setconfig_rsp(AvdtpScb* p_scb, tAVDT_SCB_EVT* p_data) {
     // Delay reporting is sent before open request (i.e., in configured state).
     avdt_scb_snd_snk_delay_rpt_req(p_scb, p_data);
 
-    p_scb->need_open = false;
-    /* Check if both local and SEP support AVDT version 1.3*/
-    if (A2DP_GetAvdtpVersion() >= AVDT_VERSION_1_3 &&
-      (p_scb->stream_config.cfg.psc_mask & AVDT_PSC_DELAY_RPT)) {
-       p_scb->need_open = true;
-    } else {
-      /* Initiate open */
-      tAVDT_EVT_HDR single;
-      single.seid = p_scb->peer_seid;
-      tAVDT_SCB_EVT avdt_scb_evt;
-      avdt_scb_evt.msg.single = single;
-      avdt_scb_event(p_scb, AVDT_SCB_API_OPEN_REQ_EVT, &avdt_scb_evt);
-    }
+    /* initiate open */
+    single.seid = p_scb->peer_seid;
+    tAVDT_SCB_EVT avdt_scb_evt;
+    avdt_scb_evt.msg.single = single;
+    avdt_scb_event(p_scb, AVDT_SCB_API_OPEN_REQ_EVT, &avdt_scb_evt);
   }
 }
 
@@ -875,20 +869,9 @@ void avdt_scb_hdl_delay_rpt_cmd(AvdtpScb* p_scb, tAVDT_SCB_EVT* p_data) {
       p_scb->p_ccb ? p_scb->p_ccb->peer_addr : RawAddress::kEmpty,
       AVDT_DELAY_REPORT_EVT, (tAVDT_CTRL*)&p_data->msg.hdr,
       p_scb->stream_config.scb_index);
-  if (p_scb->p_ccb) {
+
+  if (p_scb->p_ccb)
     avdt_msg_send_rsp(p_scb->p_ccb, AVDT_SIG_DELAY_RPT, &p_data->msg);
-    /* Check if we need open stream after set_config */
-    if (p_scb->need_open) {
-      /* Initiate open */
-      tAVDT_EVT_HDR single;
-      single.seid = p_scb->peer_seid;
-      tAVDT_SCB_EVT avdt_scb_evt;
-      avdt_scb_evt.msg.single = single;
-      avdt_scb_event(p_scb, AVDT_SCB_API_OPEN_REQ_EVT, &avdt_scb_evt);
-      /* Clear flag */
-      p_scb->need_open = false;
-    }
-  }
   else
     avdt_scb_rej_not_in_use(p_scb, p_data);
 }

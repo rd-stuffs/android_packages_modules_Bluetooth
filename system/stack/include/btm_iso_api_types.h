@@ -25,6 +25,7 @@
 
 namespace bluetooth {
 namespace hci {
+constexpr uint8_t kIsoCodingFormatTransparent = 0x03;
 constexpr uint8_t kIsoCodingFormatLc3 = 0x06;
 constexpr uint8_t kIsoCodingFormatVendorSpecific = 0xFF;
 
@@ -44,6 +45,7 @@ constexpr uint8_t kIsoDataPathDirectionIn = 0x00;
 constexpr uint8_t kIsoDataPathDirectionOut = 0x01;
 
 constexpr uint8_t kIsoDataPathHci = 0x00;
+constexpr uint8_t kIsoDataPathPlatformDefault = 0x01;
 constexpr uint8_t kIsoDataPathDisabled = 0xFF;
 
 constexpr uint8_t kIsoSca251To500Ppm = 0x00;
@@ -93,6 +95,7 @@ struct cis_data_evt {
   uint16_t cis_conn_hdl;
   uint32_t ts;
   uint16_t evt_lost;
+  uint16_t seq_nb;
   BT_HDR* p_msg;
 };
 

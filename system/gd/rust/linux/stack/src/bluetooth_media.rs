@@ -7,11 +7,13 @@ use bt_topshim::profiles::a2dp::{
     PresentationPosition,
 };
 use bt_topshim::profiles::avrcp::{Avrcp, AvrcpCallbacks, AvrcpCallbacksDispatcher};
-use bt_topshim::profiles::hfp::{BthfConnectionState, Hfp, HfpCallbacks, HfpCallbacksDispatcher};
+use bt_topshim::profiles::hfp::{
+    BthfConnectionState, Hfp, HfpCallbacks, HfpCallbacksDispatcher, HfpCodecCapability,
+};
 
 use bt_topshim::topstack;
 
-use log::warn;
+use log::{info, warn};
 
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -32,7 +34,6 @@ pub trait IBluetoothMedia {
     /// clean up media stack
     fn cleanup(&mut self) -> bool;
 
-    // TODO (b/204488289): Accept and validate RawAddress instead.
     fn connect(&mut self, device: String);
     fn set_active_device(&mut self, device: String);
     fn disconnect(&mut self, device: String);
@@ -46,16 +47,23 @@ pub trait IBluetoothMedia {
     fn start_audio_request(&mut self);
     fn stop_audio_request(&mut self);
     fn get_presentation_position(&mut self) -> PresentationPosition;
+
+    fn start_sco_call(&mut self, device: String);
+    fn stop_sco_call(&mut self, device: String);
 }
 
 pub trait IBluetoothMediaCallback {
-    ///
+    /// Triggered when a Bluetooth audio device is ready to be used. This should
+    /// only be triggered once for a device and send an event to clients. If the
+    ///  device supports both HFP and A2DP, both should be ready when this is
+    /// triggered.
     fn on_bluetooth_audio_device_added(
         &self,
         addr: String,
         sample_rate: i32,
         bits_per_sample: i32,
         channel_mode: i32,
+        hfp_cap: i32,
     );
 
     ///
@@ -122,12 +130,14 @@ impl BluetoothMedia {
                                     continue;
                                 }
 
+                                // TODO: Coordinate with HFP. Should only trigger once.
                                 self.for_all_callbacks(|callback| {
                                     callback.on_bluetooth_audio_device_added(
                                         addr.to_string(),
                                         cap.sample_rate,
                                         cap.bits_per_sample,
                                         cap.channel_mode,
+                                        HfpCodecCapability::UNSUPPORTED.bits(),
                                     );
                                 });
                                 return;
@@ -184,12 +194,29 @@ impl BluetoothMedia {
                 }
                 match state {
                     BthfConnectionState::Connected => {
-                        // TODO: Integrate with A2dp
+                        info!("HFP connected.");
                     }
-                    BthfConnectionState::Connecting => {}
-                    BthfConnectionState::Disconnected => {}
+                    BthfConnectionState::SlcConnected => {
+                        info!("HFP SLC connected.");
+                        // TODO: Coordinate with A2DP. Should only trigger once.
+                        self.for_all_callbacks(|callback| {
+                            callback.on_bluetooth_audio_device_added(
+                                addr.to_string(),
+                                0,
+                                0,
+                                0,
+                                HfpCodecCapability::CVSD.bits(),
+                            );
+                        });
+                    }
+                    BthfConnectionState::Disconnected => {
+                        info!("HFP disconnected.");
+                    }
+                    BthfConnectionState::Connecting => {
+                        info!("HFP connecting.");
+                    }
                     BthfConnectionState::Disconnecting => {
-                        // TODO: Integrate with A2dp
+                        info!("HFP disconnecting.");
                     }
                 }
             }
@@ -268,14 +295,12 @@ impl IBluetoothMedia for BluetoothMedia {
     }
 
     fn connect(&mut self, device: String) {
-        let addr = RawAddress::from_string(device.clone());
-        if addr.is_none() {
+        if let Some(addr) = RawAddress::from_string(device.clone()) {
+            self.a2dp.as_mut().unwrap().connect(addr);
+            self.hfp.as_mut().unwrap().connect(addr);
+        } else {
             warn!("Invalid device string {}", device);
-            return;
         }
-
-        self.a2dp.as_mut().unwrap().connect(device);
-        self.hfp.as_mut().unwrap().connect(addr.unwrap());
     }
 
     fn cleanup(&mut self) -> bool {
@@ -283,18 +308,20 @@ impl IBluetoothMedia for BluetoothMedia {
     }
 
     fn set_active_device(&mut self, device: String) {
-        self.a2dp.as_mut().unwrap().set_active_device(device);
+        if let Some(addr) = RawAddress::from_string(device.clone()) {
+            self.a2dp.as_mut().unwrap().set_active_device(addr);
+        } else {
+            warn!("Invalid device string {}", device);
+        }
     }
 
     fn disconnect(&mut self, device: String) {
-        let addr = RawAddress::from_string(device.clone());
-        if addr.is_none() {
+        if let Some(addr) = RawAddress::from_string(device.clone()) {
+            self.a2dp.as_mut().unwrap().disconnect(addr);
+            self.hfp.as_mut().unwrap().disconnect(addr);
+        } else {
             warn!("Invalid device string {}", device);
-            return;
         }
-
-        self.a2dp.as_mut().unwrap().disconnect(device);
-        self.hfp.as_mut().unwrap().disconnect(addr.unwrap());
     }
 
     fn set_audio_config(
@@ -326,6 +353,31 @@ impl IBluetoothMedia for BluetoothMedia {
 
     fn stop_audio_request(&mut self) {
         self.a2dp.as_mut().unwrap().stop_audio_request();
+    }
+
+    fn start_sco_call(&mut self, device: String) {
+        if let Some(addr) = RawAddress::from_string(device.clone()) {
+            info!("Start sco call for {}", device);
+            match self.hfp.as_mut().unwrap().connect_audio(addr) {
+                0 => {
+                    info!("SCO connect_audio status success.");
+                }
+                x => {
+                    warn!("SCO connect_audio status failed: {}", x);
+                }
+            };
+        } else {
+            warn!("Can't start sco call with: {}", device);
+        }
+    }
+
+    fn stop_sco_call(&mut self, device: String) {
+        if let Some(addr) = RawAddress::from_string(device.clone()) {
+            info!("Stop sco call for {}", device);
+            self.hfp.as_mut().unwrap().disconnect_audio(addr);
+        } else {
+            warn!("Can't stop sco call with: {}", device);
+        }
     }
 
     fn get_presentation_position(&mut self) -> PresentationPosition {

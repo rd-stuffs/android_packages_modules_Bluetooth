@@ -28,6 +28,7 @@
 #include "common/strings.h"
 #include "hal/hci_hal.h"
 #include "hal/snoop_logger.h"
+#include "os/alarm.h"
 #include "os/log.h"
 
 using ::android::hardware::hidl_vec;
@@ -37,6 +38,7 @@ using ::android::hardware::bluetooth::V1_1::IBluetoothHci;
 using ::android::hardware::bluetooth::V1_1::IBluetoothHciCallbacks;
 using HidlStatus = ::android::hardware::bluetooth::V1_0::Status;
 using IBluetoothHci_1_0 = ::android::hardware::bluetooth::V1_0::IBluetoothHci;
+using bluetooth::common::BindOnce;
 
 namespace bluetooth {
 namespace hal {
@@ -83,14 +85,14 @@ class InternalHciCallbacks : public IBluetoothHciCallbacks {
   }
 
   Return<void> initializationComplete(HidlStatus status) {
-    common::StopWatch(__func__);
+    common::StopWatch stop_watch(__func__);
     ASSERT(status == HidlStatus::SUCCESS);
     init_promise_->set_value();
     return Void();
   }
 
   Return<void> hciEventReceived(const hidl_vec<uint8_t>& event) override {
-    common::StopWatch(GetTimerText(__func__, event));
+    common::StopWatch stop_watch(GetTimerText(__func__, event));
     std::vector<uint8_t> received_hci_packet(event.begin(), event.end());
     btsnoop_logger_->Capture(received_hci_packet, SnoopLogger::Direction::INCOMING, SnoopLogger::PacketType::EVT);
     if (common::init_flags::btaa_hci_is_enabled()) {
@@ -103,7 +105,7 @@ class InternalHciCallbacks : public IBluetoothHciCallbacks {
   }
 
   Return<void> aclDataReceived(const hidl_vec<uint8_t>& data) override {
-    common::StopWatch(GetTimerText(__func__, data));
+    common::StopWatch stop_watch(GetTimerText(__func__, data));
     std::vector<uint8_t> received_hci_packet(data.begin(), data.end());
     btsnoop_logger_->Capture(received_hci_packet, SnoopLogger::Direction::INCOMING, SnoopLogger::PacketType::ACL);
     if (common::init_flags::btaa_hci_is_enabled()) {
@@ -116,7 +118,7 @@ class InternalHciCallbacks : public IBluetoothHciCallbacks {
   }
 
   Return<void> scoDataReceived(const hidl_vec<uint8_t>& data) override {
-    common::StopWatch(GetTimerText(__func__, data));
+    common::StopWatch stop_watch(GetTimerText(__func__, data));
     std::vector<uint8_t> received_hci_packet(data.begin(), data.end());
     btsnoop_logger_->Capture(received_hci_packet, SnoopLogger::Direction::INCOMING, SnoopLogger::PacketType::SCO);
     if (common::init_flags::btaa_hci_is_enabled()) {
@@ -129,7 +131,7 @@ class InternalHciCallbacks : public IBluetoothHciCallbacks {
   }
 
   Return<void> isoDataReceived(const hidl_vec<uint8_t>& data) override {
-    common::StopWatch(GetTimerText(__func__, data));
+    common::StopWatch stop_watch(GetTimerText(__func__, data));
     std::vector<uint8_t> received_hci_packet(data.begin(), data.end());
     btsnoop_logger_->Capture(received_hci_packet, SnoopLogger::Direction::INCOMING, SnoopLogger::PacketType::ISO);
     if (callback_ != nullptr) {
@@ -205,6 +207,13 @@ class HciHalHidl : public HciHal {
     }
     btsnoop_logger_ = GetDependency<SnoopLogger>();
 
+    auto get_service_alarm = new os::Alarm(GetHandler());
+    get_service_alarm->Schedule(
+        BindOnce([] {
+          LOG_ALWAYS_FATAL("Unable to get a Bluetooth service after 500ms, start the HAL before starting Bluetooth");
+        }),
+        std::chrono::milliseconds(500));
+
     bt_hci_1_1_ = IBluetoothHci::getService();
 
     if (bt_hci_1_1_ != nullptr) {
@@ -213,21 +222,22 @@ class HciHalHidl : public HciHal {
       bt_hci_ = IBluetoothHci_1_0::getService();
     }
 
+    get_service_alarm->Cancel();
+    delete get_service_alarm;
+
     ASSERT(bt_hci_ != nullptr);
     auto death_link = bt_hci_->linkToDeath(hci_death_recipient_, 0);
     ASSERT_LOG(death_link.isOk(), "Unable to set the death recipient for the Bluetooth HAL");
-    // Block allows allocation of a variable that might be bypassed by goto.
-    {
-      callbacks_ = new InternalHciCallbacks(btaa_logger_, btsnoop_logger_);
-      if (bt_hci_1_1_ != nullptr) {
-        bt_hci_1_1_->initialize_1_1(callbacks_);
-      } else {
-        bt_hci_->initialize(callbacks_);
-      }
+    callbacks_ = new InternalHciCallbacks(btaa_logger_, btsnoop_logger_);
 
-      // Don't timeout here, time out at a higher layer
-      callbacks_->GetInitPromise()->get_future().wait();
+    if (bt_hci_1_1_ != nullptr) {
+      bt_hci_1_1_->initialize_1_1(callbacks_);
+    } else {
+      bt_hci_->initialize(callbacks_);
     }
+
+    // Don't timeout here, time out at a higher layer
+    callbacks_->GetInitPromise()->get_future().wait();
   }
 
   void Stop() override {

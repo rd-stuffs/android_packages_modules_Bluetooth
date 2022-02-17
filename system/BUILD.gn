@@ -53,13 +53,11 @@ group("bluetooth") {
   #}
 #}
 
-if (host_cpu == target_cpu && host_os == target_os) {
-  group("tools") {
-    deps = [
-      "//bt/system/gd/dumpsys/bundler:bluetooth_flatbuffer_bundler",
-      "//bt/system/gd/packet/parser:bluetooth_packetgen",
-    ]
-  }
+group("tools") {
+  deps = [
+    "//bt/system/gd/dumpsys/bundler:bluetooth_flatbuffer_bundler",
+    "//bt/system/gd/packet/parser:bluetooth_packetgen",
+  ]
 }
 
 if (defined(use.android) && use.android) {
@@ -104,6 +102,8 @@ config("target_defaults") {
     "-Wno-pessimizing-move",
     "-Wno-unknown-warning-option",
     "-Wno-final-dtor-non-final-class",
+
+    string_join("", ["-ffile-prefix-map=", rebase_path(".", "${root_build_dir}", "."), "/= "])
   ]
 
   cflags_cc = [
@@ -117,6 +117,12 @@ config("target_defaults") {
     "TARGET_FLOSS",
     "EXPORT_SYMBOL=__attribute__((visibility(\"default\")))",
     "FALLTHROUGH_INTENDED=[[clang::fallthrough]]",
+    # TODO(b/214148074): Start with NB, should enable WB.
+    "DISABLE_WBS=TRUE",
+    # TODO(b/214149380): Start with no extra feature supported. Should enable
+    # required features in the future.
+    # This will be consumed by BTA_AgRegister and passed to HF through AT+BRSF.
+    "BTIF_HF_FEATURES=0x00000000"
   ]
 
   # If not configured as a dynamic library, default to static library
