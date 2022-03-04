@@ -93,12 +93,13 @@ void RegisterClientCallback(int status, int client_if,
       RegisterClientCallback(g_interface, status, client_if, app_uuid));
 }
 
-void ScanResultCallback(
-    uint16_t ble_evt_type, uint8_t addr_type, RawAddress* bda,
-    uint8_t ble_primary_phy, uint8_t ble_secondary_phy,
-    uint8_t ble_advertising_sid, int8_t ble_tx_power, int8_t rssi,
-    uint16_t ble_periodic_adv_int,
-    std::vector<uint8_t> adv_data) {  // NOLINT(pass-by-value)
+void ScanResultCallback(uint16_t ble_evt_type, uint8_t addr_type,
+                        RawAddress* bda, uint8_t ble_primary_phy,
+                        uint8_t ble_secondary_phy, uint8_t ble_advertising_sid,
+                        int8_t ble_tx_power, int8_t rssi,
+                        uint16_t ble_periodic_adv_int,
+                        std::vector<uint8_t> adv_data,
+                        RawAddress* original_bda) {  // NOLINT(pass-by-value)
   shared_lock<shared_mutex_impl> lock(g_instance_lock);
   VERIFY_INTERFACE_OR_RETURN();
   CHECK(bda);
@@ -165,24 +166,26 @@ void NotifyCallback(int conn_id, const btgatt_notify_params_t& p_data) {
   FOR_EACH_CLIENT_OBSERVER(NotifyCallback(g_interface, conn_id, p_data));
 }
 
-void WriteCharacteristicCallback(int conn_id, int status, uint16_t handle) {
+void WriteCharacteristicCallback(int conn_id, int status, uint16_t handle,
+                                 uint16_t len, const uint8_t* value) {
   shared_lock<shared_mutex_impl> lock(g_instance_lock);
   VERIFY_INTERFACE_OR_RETURN();
 
   VLOG(2) << __func__ << " - conn_id: " << conn_id << " - status: " << status;
 
   FOR_EACH_CLIENT_OBSERVER(WriteCharacteristicCallback(
-      g_interface, conn_id, status, handle));
+      g_interface, conn_id, status, handle, len, value));
 }
 
-void WriteDescriptorCallback(int conn_id, int status, uint16_t handle) {
+void WriteDescriptorCallback(int conn_id, int status, uint16_t handle,
+                             uint16_t len, const uint8_t* value) {
   shared_lock<shared_mutex_impl> lock(g_instance_lock);
   VERIFY_INTERFACE_OR_RETURN();
 
   VLOG(2) << __func__ << " - conn_id: " << conn_id << " - status: " << status;
 
   FOR_EACH_CLIENT_OBSERVER(WriteDescriptorCallback(g_interface, conn_id, status,
-                                                   handle));
+                                                   handle, len, value));
 }
 
 void MtuChangedCallback(int conn_id, int status, int mtu) {
@@ -610,13 +613,15 @@ void BluetoothGattInterface::ClientObserver::NotifyCallback(
 
 void BluetoothGattInterface::ClientObserver::WriteCharacteristicCallback(
     BluetoothGattInterface* /* gatt_iface */, int /* conn_id */,
-    int /* status */, uint16_t /* handle */) {
+    int /* status */, uint16_t /* handle */, uint16_t /* len */,
+    const uint8_t* /* value */) {
   // Do nothing
 }
 
 void BluetoothGattInterface::ClientObserver::WriteDescriptorCallback(
     BluetoothGattInterface* /* gatt_iface */, int /* conn_id */,
-    int /* status */, uint16_t /* handle */) {
+    int /* status */, uint16_t /* handle */, uint16_t /* len */,
+    const uint8_t* /* value */) {
   // Do nothing
 }
 
