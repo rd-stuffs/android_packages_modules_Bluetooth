@@ -134,7 +134,7 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
                 .vendor_codec_id = codec_id.vendor_codec_id,
                 .codec_specific_params = std::move(codec_spec_data),
             },
-        .metadata = metadata,
+        .metadata = std::move(metadata),
         .bis_configs = {},
     }};
 
@@ -172,9 +172,10 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
         std::move(announcement));
   }
 
-  void CreateAudioBroadcast(
-      std::vector<uint8_t> metadata, LeAudioBroadcaster::AudioProfile profile,
-      std::optional<LeAudioBroadcaster::Code> broadcast_code) override {
+  void CreateAudioBroadcast(std::vector<uint8_t> metadata,
+                            LeAudioBroadcaster::AudioProfile profile,
+                            std::optional<bluetooth::le_audio::BroadcastCode>
+                                broadcast_code) override {
     DLOG(INFO) << __func__;
 
     auto& codec_wrapper =
@@ -542,7 +543,7 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
 
         encoders_mem_.emplace_back(malloc(encoder_bytes), &std::free);
         encoders_.emplace_back(
-            lc3_setup_encoder(dt_us, sr_hz, encoders_mem_.back().get()));
+            lc3_setup_encoder(dt_us, sr_hz, 0, encoders_mem_.back().get()));
       }
     }
 
@@ -686,7 +687,7 @@ LeAudioBroadcasterImpl::LeAudioClientAudioSinkReceiverImpl
 
 void LeAudioBroadcaster::Initialize(
     bluetooth::le_audio::LeAudioBroadcasterCallbacks* callbacks,
-    base::Callback<bool()> hal_2_1_verifier) {
+    base::Callback<bool()> audio_hal_verifier) {
   LOG(INFO) << "Broadcaster " << __func__;
   if (instance) {
     LOG(ERROR) << "Already initialized";
@@ -701,7 +702,7 @@ void LeAudioBroadcaster::Initialize(
 
   IsoManager::GetInstance()->Start();
 
-  if (!std::move(hal_2_1_verifier).Run()) {
+  if (!std::move(audio_hal_verifier).Run()) {
     LOG_ASSERT(false) << __func__ << ", HAL 2.1 not supported, Init aborted.";
     return;
   }

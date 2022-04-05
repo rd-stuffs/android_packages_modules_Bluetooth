@@ -100,6 +100,9 @@ public class HeadsetService extends ProfileService {
             {BluetoothProfile.STATE_CONNECTING, BluetoothProfile.STATE_CONNECTED};
     private static final int DIALING_OUT_TIMEOUT_MS = 10000;
 
+    // Timeout for state machine thread join, to prevent potential ANR.
+    private static final int SM_THREAD_JOIN_TIMEOUT_MS = 1000;
+
     private int mMaxHeadsetConnections = 1;
     private BluetoothDevice mActiveDevice;
     private AdapterService mAdapterService;
@@ -237,8 +240,14 @@ public class HeadsetService extends ProfileService {
         // Step 3: Destroy system interface
         mSystemInterface.stop();
         // Step 2: Stop handler thread
-        mStateMachinesThread.quitSafely();
-        mStateMachinesThread = null;
+        try {
+            mStateMachinesThread.quitSafely();
+            mStateMachinesThread.join(SM_THREAD_JOIN_TIMEOUT_MS);
+            mStateMachinesThread = null;
+        } catch (InterruptedException e) {
+            // Do not rethrow as we are shutting down anyway
+        }
+
         mStateMachinesThreadHandler = null;
         // Step 1: Clear
         synchronized (mStateMachines) {
@@ -790,6 +799,7 @@ public class HeadsetService extends ProfileService {
                 HeadsetService service = getService(source);
                 boolean defaultValue = false;
                 if (service != null) {
+                    enforceBluetoothPrivilegedPermission(service);
                     defaultValue = service.startScoUsingVirtualVoiceCall();
                 }
                 receiver.send(defaultValue);
@@ -805,6 +815,7 @@ public class HeadsetService extends ProfileService {
                 HeadsetService service = getService(source);
                 boolean defaultValue = false;
                 if (service != null) {
+                    enforceBluetoothPrivilegedPermission(service);
                     defaultValue = service.stopScoUsingVirtualVoiceCall();
                 }
                 receiver.send(defaultValue);
@@ -895,6 +906,16 @@ public class HeadsetService extends ProfileService {
             } catch (RuntimeException e) {
                 receiver.propagateException(e);
             }
+        }
+
+        @Override
+        public void phoneStateChangedDsDa(int numActive, int numHeld, int callState, String number,
+                                          int type, String name, AttributionSource source) {
+        }
+
+        @Override
+        public void clccResponseDsDa(int index, int direction, int status, int mode, boolean mpty,
+                                     String number, int type, AttributionSource source) {
         }
     }
 

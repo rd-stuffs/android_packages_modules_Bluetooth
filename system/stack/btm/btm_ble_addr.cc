@@ -38,8 +38,6 @@
 
 extern tBTM_CB btm_cb;
 
-void btm_ble_set_random_address(const RawAddress& random_bda);
-
 /* This function generates Resolvable Private Address (RPA) from Identity
  * Resolving Key |irk| and |random|*/
 static RawAddress generate_rpa_from_irk_and_rand(const Octet16& irk,
@@ -183,6 +181,7 @@ static bool btm_ble_match_random_bda(void* data, void* context) {
  * matched to.
  */
 tBTM_SEC_DEV_REC* btm_ble_resolve_random_addr(const RawAddress& random_bda) {
+  if (btm_cb.sec_dev_rec == nullptr) return nullptr;
   list_node_t* n = list_foreach(btm_cb.sec_dev_rec, btm_ble_match_random_bda,
                                 (void*)&random_bda);
   return (n == nullptr) ? (nullptr)
@@ -195,6 +194,8 @@ tBTM_SEC_DEV_REC* btm_ble_resolve_random_addr(const RawAddress& random_bda) {
 /** Find the security record whose LE identity address is matching */
 static tBTM_SEC_DEV_REC* btm_find_dev_by_identity_addr(
     const RawAddress& bd_addr, uint8_t addr_type) {
+  if (btm_cb.sec_dev_rec == nullptr) return nullptr;
+
   list_node_t* end = list_end(btm_cb.sec_dev_rec);
   for (list_node_t* node = list_begin(btm_cb.sec_dev_rec); node != end;
        node = list_next(node)) {

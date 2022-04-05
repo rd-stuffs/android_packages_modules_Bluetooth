@@ -47,12 +47,6 @@ public final class BluetoothLeAudioCodecConfig implements Parcelable {
     public static final int SOURCE_CODEC_TYPE_LC3 = 0;
     public static final int SOURCE_CODEC_TYPE_INVALID = 1000 * 1000;
 
-    /**
-     * Represents the count of valid source codec types. Can be accessed via
-     * {@link #getMaxCodecType}.
-     */
-    private static final int SOURCE_CODEC_TYPE_MAX = 1;
-
     /** @hide */
     @IntDef(prefix = "CODEC_PRIORITY_",
             value = {CODEC_PRIORITY_DISABLED, CODEC_PRIORITY_DEFAULT, CODEC_PRIORITY_HIGHEST})
@@ -280,13 +274,6 @@ public final class BluetoothLeAudioCodecConfig implements Parcelable {
     }
 
     /**
-     * Returns the valid codec types count.
-     */
-    public static int getMaxCodecType() {
-        return SOURCE_CODEC_TYPE_MAX;
-    }
-
-    /**
      * Gets the codec name.
      *
      * @return the codec name
@@ -336,14 +323,14 @@ public final class BluetoothLeAudioCodecConfig implements Parcelable {
     /**
      * Returns the frame duration.
      */
-    public @ChannelMode int getFrameDuration() {
+    public @FrameDuration int getFrameDuration() {
         return mFrameDuration;
     }
 
     /**
      * Returns the octets per frame
      */
-    public @ChannelMode int getOctetsPerFrame() {
+    public int getOctetsPerFrame() {
         return mOctetsPerFrame;
     }
 
