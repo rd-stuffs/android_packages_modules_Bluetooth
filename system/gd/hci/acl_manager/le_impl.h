@@ -19,14 +19,24 @@
 #include <base/strings/stringprintf.h>
 
 #include <atomic>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <unordered_set>
 
 #include "common/bind.h"
 #include "crypto_toolbox/crypto_toolbox.h"
 #include "hci/acl_manager/assembler.h"
+#include "hci/acl_manager/le_connection_management_callbacks.h"
 #include "hci/acl_manager/round_robin_scheduler.h"
+#include "hci/controller.h"
+#include "hci/hci_layer.h"
+#include "hci/hci_packets.h"
 #include "hci/le_address_manager.h"
 #include "os/alarm.h"
+#include "os/handler.h"
+#include "packet/packet_view.h"
 
 using bluetooth::crypto_toolbox::Octet16;
 
@@ -109,7 +119,7 @@ struct le_impl : public bluetooth::hci::LeAddressManagerCallback {
 
   ~le_impl() {
     if (address_manager_registered) {
-      le_address_manager_->Unregister(this);
+      le_address_manager_->UnregisterSync(this);
     }
     delete le_address_manager_;
     hci_layer_->PutLeAclConnectionInterface();
@@ -591,9 +601,9 @@ struct le_impl : public bluetooth::hci::LeAddressManagerCallback {
   }
 
   void disarm_connectability() {
-    if (connectability_state_ != ConnectabilityState::ARMED) {
+    if (connectability_state_ != ConnectabilityState::ARMED && connectability_state_ != ConnectabilityState::ARMING) {
       LOG_ERROR(
-          "Attempting to re-arm le connection state machine in unexpected state:%s",
+          "Attempting to disarm le connection state machine in unexpected state:%s",
           connectability_state_machine_text(connectability_state_).c_str());
       return;
     }
@@ -669,6 +679,7 @@ struct le_impl : public bluetooth::hci::LeAddressManagerCallback {
     ASSERT(check_connection_parameters(conn_interval_min, conn_interval_max, conn_latency, supervision_timeout));
 
     connecting_le_.insert(address_with_type);
+    connectability_state_ = ConnectabilityState::ARMING;
 
     if (initiator_filter_policy == InitiatorFilterPolicy::USE_CONNECT_LIST) {
       address_with_type = AddressWithType();

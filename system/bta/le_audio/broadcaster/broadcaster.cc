@@ -34,14 +34,15 @@ using bluetooth::hci::IsoManager;
 using bluetooth::hci::iso_manager::big_create_cmpl_evt;
 using bluetooth::hci::iso_manager::big_terminate_cmpl_evt;
 using bluetooth::hci::iso_manager::BigCallbacks;
+using bluetooth::le_audio::BasicAudioAnnouncementData;
 using bluetooth::le_audio::BroadcastId;
-using le_audio::broadcaster::BasicAudioAnnouncementData;
 using le_audio::broadcaster::BigConfig;
 using le_audio::broadcaster::BroadcastCodecWrapper;
 using le_audio::broadcaster::BroadcastStateMachine;
 using le_audio::broadcaster::BroadcastStateMachineConfig;
 using le_audio::broadcaster::IBroadcastStateMachineCallbacks;
 using le_audio::types::kLeAudioCodingFormatLC3;
+using le_audio::types::LeAudioLtvMap;
 
 namespace {
 class LeAudioBroadcasterImpl;
@@ -121,20 +122,18 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
   }
 
   static BasicAudioAnnouncementData prepareAnnouncement(
-      const BroadcastCodecWrapper& codec_config,
-      std::vector<uint8_t> metadata) {
+      const BroadcastCodecWrapper& codec_config, LeAudioLtvMap metadata) {
     BasicAudioAnnouncementData announcement;
 
     /* Prepare the announcement */
     announcement.presentation_delay = 0x004E20; /* TODO: Use the proper value */
 
     auto const& codec_id = codec_config.GetLeAudioCodecId();
-    auto codec_spec_data = codec_config.GetCodecSpecData();
 
     /* Note: Currently we have a single audio source configured with a one
      *       set of codec/pcm parameters thus we can use a single subgroup
-     *       for all the BISes. And configure codec params at the BIG level,
-     *       since all these BISes share common codec configuration.
+     *       for all the BISes. Configure common BIS codec params at the
+     *       subgroup level.
      */
     announcement.subgroup_configs = {{
         .codec_config =
@@ -142,21 +141,18 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
                 .codec_id = codec_id.coding_format,
                 .vendor_company_id = codec_id.vendor_company_id,
                 .vendor_codec_id = codec_id.vendor_codec_id,
-                .codec_specific_params = std::move(codec_spec_data),
+                .codec_specific_params =
+                    codec_config.GetSubgroupCodecSpecData().Values(),
             },
-        .metadata = std::move(metadata),
+        .metadata = metadata.Values(),
         .bis_configs = {},
     }};
 
-    /* In general we could have individual BISes in this single subgroup
-     * have different codec configurations, but here we put all channel bises
-     * into this one subgroup and assign every BIS's index with an empty config
-     * to indicate that the lower lvl config should be used instead.
-     * BIS indices range is [1-31] - BASS, Sec.3.2 Broadcast Receive State.
-     */
+    /* BIS indices range is [1-31] - BASS, Sec.3.2 Broadcast Receive State. */
     for (uint8_t i = 0; i < codec_config.GetNumChannels(); ++i) {
       announcement.subgroup_configs[0].bis_configs.push_back(
-          {.codec_specific_params = {},
+          {.codec_specific_params =
+               codec_config.GetBisCodecSpecData(i + 1).Values(),
            .bis_index = static_cast<uint8_t>(i + 1)});
     }
 
@@ -172,11 +168,19 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
 
     LOG_INFO("For broadcast_id=%d", broadcast_id);
 
-    auto& codec_config = audio_receiver_.getCurrentCodecConfig();
+    auto& codec_config = broadcasts_[broadcast_id]->GetCodecConfig();
 
     /* Prepare the announcement format */
+    bool is_metadata_valid;
+    auto ltv = LeAudioLtvMap::Parse(metadata.data(), metadata.size(),
+                                    is_metadata_valid);
+    if (!is_metadata_valid) {
+      LOG_ERROR("Invalid metadata provided.");
+      return;
+    }
+
     BasicAudioAnnouncementData announcement =
-        prepareAnnouncement(codec_config, std::move(metadata));
+        prepareAnnouncement(codec_config, std::move(ltv));
 
     broadcasts_[broadcast_id]->UpdateBroadcastAnnouncement(
         std::move(announcement));
@@ -199,14 +203,19 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
     if (available_broadcast_ids_.size() == 0) GenerateBroadcastIds();
 
     /* Prepare the announcement format */
-    BasicAudioAnnouncementData announcement =
-        prepareAnnouncement(codec_wrapper, std::move(metadata));
+    bool is_metadata_valid;
+    auto ltv = LeAudioLtvMap::Parse(metadata.data(), metadata.size(),
+                                    is_metadata_valid);
+    if (!is_metadata_valid) {
+      LOG_ERROR("Invalid metadata provided.");
+      return;
+    }
 
     BroadcastStateMachineConfig msg = {
         .broadcast_id = broadcast_id,
         .streaming_phy = GetStreamingPhy(),
         .codec_wrapper = codec_wrapper,
-        .announcement = std::move(announcement),
+        .announcement = prepareAnnouncement(codec_wrapper, std::move(ltv)),
         .broadcast_code = std::move(broadcast_code)};
 
     /* Create the broadcaster instance - we'll receive it's init state in the
@@ -290,6 +299,40 @@ class LeAudioBroadcasterImpl : public LeAudioBroadcaster, public BigCallbacks {
   void DestroyAudioBroadcast(uint32_t broadcast_id) override {
     LOG_INFO("Destroying broadcast_id=%d", broadcast_id);
     broadcasts_.erase(broadcast_id);
+  }
+
+  std::optional<bluetooth::le_audio::BroadcastMetadata> GetBroadcastMetadataOpt(
+      bluetooth::le_audio::BroadcastId broadcast_id) {
+    bluetooth::le_audio::BroadcastMetadata metadata;
+    for (auto const& kv_it : broadcasts_) {
+      if (kv_it.second->GetBroadcastId() == broadcast_id) {
+        metadata.broadcast_id = kv_it.second->GetBroadcastId();
+        metadata.adv_sid = kv_it.second->GetAdvertisingSid();
+        metadata.pa_interval = kv_it.second->GetPaInterval();
+        metadata.addr = kv_it.second->GetOwnAddress();
+        metadata.addr_type = kv_it.second->GetOwnAddressType();
+        metadata.broadcast_code = kv_it.second->GetBroadcastCode();
+        metadata.basic_audio_announcement =
+            kv_it.second->GetBroadcastAnnouncement();
+        return metadata;
+      }
+    }
+    return std::nullopt;
+  }
+
+  void GetBroadcastMetadata(uint32_t broadcast_id) override {
+    if (broadcasts_.count(broadcast_id) == 0) {
+      LOG_ERROR("No such broadcast_id=%d", broadcast_id);
+      return;
+    }
+
+    auto meta = GetBroadcastMetadataOpt(broadcast_id);
+    if (!meta) {
+      LOG_ERROR("No metadata for broadcast_id=%d", broadcast_id);
+      return;
+    }
+    callbacks_->OnBroadcastMetadataChanged(broadcast_id,
+                                           std::move(meta.value()));
   }
 
   void GetAllBroadcastStates(void) override {
