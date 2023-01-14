@@ -2446,7 +2446,8 @@ void btm_ble_update_inq_result(tINQ_DB_ENT* p_i, uint8_t addr_type,
                 (remaining_data_len -= service_data_len),
                 BTM_BLE_AD_TYPE_SERVICE_DATA_TYPE, &service_data_len))) {
       uint16_t uuid;
-      STREAM_TO_UINT16(uuid, p_service_data);
+      const uint8_t* p_uuid = p_service_data;
+      STREAM_TO_UINT16(uuid, p_uuid);
 
       if (uuid == 0x184E /* Audio Stream Control service */ ||
           uuid == 0x184F /* Broadcast Audio Scan service */ ||
